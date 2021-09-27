@@ -1,72 +1,111 @@
-function [trainFeatures, testFeatures,featureIndices] = featureExtraction(trainData,testData,T,AROrder,level)
+%function [trainFeatures,featureindices] = featureExtraction(trainData,T,AR_order,level)
+function [trainFeatures,featureindices] = featureExtraction(trainData,T,AR_order,level)
+% This function is only in support of XpwWaveletMLExample. It may change or
+% be removed in a future release.
+trainFeatures = [];
 
-trainFeatures = featureExtract(trainData, T, AROrder, level);
-testFeatures = featureExtract(testData, T, AROrder, level);
 
-featureIndices = struct();
-featureIndices.ARFeatures = 1:32;
-%featureIndices.ARFeatures = 1:40;
-start = 33;
-%start = 41;
-%ending = 33+(16*8)-1; %ECG
-%ending = 41+(16*10)-1; %ECG
-%ending = 41+(16*20)-1; %PPG
-ending = 33+(2*80)-1; %ECGPPG
-featureIndices.entropyFeatures = start:ending;
+for idx =1:size(trainData,1)
+    x = trainData(idx,:);
+    x = detrend(x,0);
+    arcoefs = blockAR(x,AR_order,T);
+    se = shannonEntropy(x,T,level);
+    %le=leaders(x,T);
 
-%start = ending+1;
-%ending = start+7;
-%featureIndices.pulseFeatures = start:ending;
-
-%start = ending+1;
-%ending = start+7;
-%featureIndices.rateFeatures = start:ending;
-
-start = ending+1;
-%ending = start+13;
-ending = start+11;
-featureIndices.varianceFeatures = start:ending;
-
+    % [cp,rh] = leaders(x,T);
+ 
+      wvar = modwtvar(modwt(x,'haar'),'haar'); % 85.5%
+      
+      sigenergy = sum(x.^2,2);
+      absvalue=abs(x);
+      %wvar1 = modwtvar(modwpt(x,'haar'),'haar'); % 85.5%
+      %wvar2 = modwtvar(modwt(x,'haar'),'haar'); % 85.5%
+     
+   % wvar = modwtvar(modwt(y,'db15'),'db15'); % 82%
+   % wvar = modwtvar(modwt(y,'db4'),'db4');
+    
+    %wvar = modwtvar(modwt(y,'coif1'),'coif1');
+    %wvar = modwtvar(modwt(y,'fk22'),'fk22');
+    %wvar = modwtvar(modwt(x,'sym2'),'sym2');
+    sep = pentropy(x,T);
+    ifq=  ceil(instfreq(x,T));
+    ps= ceil(pspectrum(x,T));
+    wp = wpe(x,T,level);
+    
+   
+    %cvar=cwt(x,'bump')
+    wtropy = wentropy(x,'shannon');
+    wtropy1 = wentropy(x,'log energy');
+    
+    %wavelet packet energy
+    
+    
+    [C,L] = wavedec(x,12,'haar');
+    [Ea,Ed] = wenergy(C,L);
+    
+    %trainFeatures = [trainFeatures; arcoefs se wvar']; %#ok<AGROW>
+    %trainFeatures = [trainFeatures; wvar' sigenergy' wtropy wtropy1 se' Ea Ed];
+     %trainFeatures = [trainFeatures; wvar' Ea Ed sigenergy'];
+    %trainFeatures = [trainFeatures; wvar' sigenergy' Ed wp wtropy];
+    %trainFeatures = [trainFeatures; arcoefs se wvar' wtropy];
+     trainFeatures = [trainFeatures; arcoefs se wvar'];
+    %trainFeatures = [trainFeatures; absvalue] ;
 end
 
-function [features] = featureExtract(data, T, AROrder, level)
-    features = [];
-    for i =1:size(data,1)
-    
-        x = data(i,:);
-        x = detrend(x,0);
-        y = buffer(x,T);
-        windows = round(numel(x) / T);
-       
-        length = size(y,2);
-    
-        ARCoeffient = zeros(AROrder,length);
-        entropy = zeros(2^level,length);
-        %pulse = zeros(1,length);
-        %rate = zeros(1,length);
-    
-        j = 1;
-        while j < length + 1
-            temp =  arburg(y(:,j),AROrder);
-            ARCoeffient(:,j) = temp(2:end);
-            
-            packetTransform = modwpt(y(:,j),level);
-            t = sum(packetTransform.^2,2);
-            z = packetTransform.^2./t;
-            entropy(:,j) = -sum(z.*log(z+eps),2);
-            
-            [~,h,tmp] = dwtleader(y(:,j));
-            %pulse(j) = tmp(2);
-            %rate(j) = range(h);
-            j = j + 1;
-        end
-    
-        ARCoeffient = reshape(ARCoeffient,AROrder * windows,1);
-        entropy = reshape(entropy,2^level * windows,1);
-        variance = modwtvar(modwt(x,'db2'),'db2');
-        
-        %features = [features; ARCoeffient' entropy' pulse rate variance'];
-        features = [features; ARCoeffient' entropy' variance'];   
-    end
+featureindices = struct();
+featureindices.SpectralEntropy = 1:32;
+startidx = 33;
+endidx = startidx+11;
+featureindices.WVARfeatures = startidx:endidx;
+end
 
+
+function wp = wpe(x,numbuffer,level)
+numwindows = round(numel(x)/numbuffer);
+y = buffer(x,numbuffer);
+wp = zeros(2^level,size(y,2));
+for kk = 1:size(y,2)
+    wpt = modwpt(y(:,kk),level);
+    wp(:,kk) = sum(wpt.^2,2);
+end
+wp = reshape(wp,2^level*numwindows,1);
+wp = wp';
+end
+function se = shannonEntropy(x,numbuffer,level)
+numwindows = round(numel(x)/numbuffer);
+y = buffer(x,numbuffer);
+se = zeros(2^level,size(y,2));
+for kk = 1:size(y,2)
+    wpt = modwpt(y(:,kk),level);
+    % Sum across time
+    E = sum(wpt.^2,2);
+    Pij = wpt.^2./E;
+    % The following is eps(1)
+    se(:,kk) = -sum(Pij.*log(Pij+eps),2);
+end
+se = reshape(se,2^level*numwindows,1);
+se = se';
+end
+
+function arcfs = blockAR(x,order,numbuffer)
+numwindows = round(numel(x)/numbuffer);
+y = buffer(x,numbuffer);
+arcfs = zeros(order,size(y,2));
+for kk = 1:size(y,2)
+    artmp =  arburg(y(:,kk),order);
+    arcfs(:,kk) = artmp(2:end);
+end
+arcfs = reshape(arcfs,order*numwindows,1);
+arcfs = arcfs';
+end
+
+function le=leaders(x,numbuffer)
+y = buffer(x,numbuffer);
+le = zeros(1,size(y,3));
+for kk = 1:size(y,3)
+      le = wentropy(y(:,kk),'log energy');
+  %  [~,h,cptmp] = dwtleader(y(:,kk));
+  %  cp(kk) = cptmp(2);
+  % rh(kk) = range(h);
+end
 end
